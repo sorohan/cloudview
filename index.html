@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" ng-app="cloudviewApp">
+    <head>
+        <script src="components/angular/angular.js"></script>
+        <script src="app/js/cloudview.js"></script>
+    </head>
+    <body ng-controller="CloudviewCtrl">
+        Cloudformation Stack template URL: <input type="text" ng-model="templateUrl" />
+        <input type="button" value="bam" ng-click="loadStack()" />
+        <form class="stack-params" ng-show="!isEmpty(stack.Parameters)">
+            <dl>
+                <dt ng-repeat-start="(paramName,param) in stack.Parameters">{{paramName}}</dt>
+                <dd ng-repeat-end>
+                    <input type="text" ng-model="stack.Parameters[paramName].Value">
+                    {{param.Description}}
+                </dd>
+            </dl>
+            <button ng-click="updateStackParams()">Update Stack Params</button>
+        </form>
+
+        <cloudview-stack></cloudview-stack>
+
+        <pre>{{jsonStringify(stack, null, 4)}}</pre>
+    </body>
+</html>
