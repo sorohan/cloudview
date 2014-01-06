@@ -27,11 +27,30 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         });
     };
 
-    $scope.jsonStringify = JSON.stringify;
-    $scope.isEmpty = function(obj)
+    $scope.jsonStringify = function(obj)
+    {
+        var cache = [];
+        var str = JSON.stringify(obj, function(key, value) {
+            if (typeof value === 'object' && value !== null) {
+                if (cache.indexOf(value) !== -1) {
+                    // Circular reference found, discard key
+                    return '[Circular]';
+                }
+                // Store value in our collection
+                cache.push(value);
+            }
+            return value;
+        }, 4);
+        return str;
+    };
+
+    var isEmpty = function(obj)
     {
         return !obj || angular.equals(obj, {});
     };
+
+    // Expose isEmpty.
+    $scope.isEmpty  = isEmpty;
 
     var loadStackTemplateFromUrl = function(templateUrl)
     {
@@ -71,8 +90,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
     {
         var parameters = {};
         if (stackTemplate.Parameters) {
-            angular.forEach(stackTemplate.Parameters, function(param, paramName)
-            {
+            angular.forEach(stackTemplate.Parameters, function(param, paramName) {
                 if (param.Default && !param.Value) {
                     // Set param default value.
                     param.Value = param.Default;
@@ -86,16 +104,52 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
 
     var loadStackResources = function(stackTemplate, stack)
     {
-        var deferred = $q.defer();
-
         var resources = {};
-        var delayed = {};
-        var attempts = 0;
-        var maxAttempts = 100;
+        var resourcePromises = {};
+        var resourceRefs;
+        var resourceDependencies;
+        var dependencyPromises;
 
-        var isResouceRefsMet = function(resource, stack)
+        var getAllResourceRefs = function(obj, refs)
         {
-            return true;
+            if ('undefined' === typeof refs) {
+                refs = [];
+            }
+
+            if (!angular.isObject(obj)) {
+                return refs;
+            }
+            else {
+                angular.forEach(obj, function(value, key) {
+                    if (angular.isObject(value)) {
+                        if ('undefined' !== typeof value.Ref) {
+                            refs.push(value.Ref);
+                        }
+                        else {
+                            // concat sub-object refs if any.
+                            refs = getAllResourceRefs(value, refs);
+                        }
+                    }
+                });
+            }
+
+            return refs;
+        };
+
+
+        var isResourceRefsMet = function(resource, parameters, resources)
+        {
+            var refs = getAllResourceRefs(resource);
+
+            var allMet = true;
+            var isMet;
+
+            angular.forEach(refs, function(ref) {
+                isMet = resolveStackRef(ref, parameters, resources);
+                allMet = allMet && isMet;
+            });
+
+            return allMet;
         };
 
         var loadResource = function(resource, resourceName)
@@ -111,10 +165,10 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                         loadStackFromTemplate(resource.StackTemplate).then(function(result) {
                             resource.Stack = result;
                             deferred.resolve(resource);
-                        })
+                        });
                     }
                     else {
-                        // Template failed to load.
+                        // Template failed to load (todo: reject promise).
                         resource.Stack = null;
                         deferred.resolve(resource);
                     }
@@ -128,42 +182,87 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         };
 
         if (stackTemplate.Resources) {
-            // Process resources until all done, or give up.
+            // Process all resources (create a depency map of promises).
             var resourcesToLoad = angular.copy(stackTemplate.Resources);
-            while (!$scope.isEmpty(resourcesToLoad) && attempts < maxAttempts)
-            {
-                angular.forEach(resourcesToLoad, function(resource, resourceName)
-                {
-                    if (isResouceRefsMet(resource, stack)) {
-                        // Resources met, load then check if we can resolve our promise to load all.
-                        loadResource(resource, resourceName).then(function(result) {
-                            resources[resourceName] = result;
-                            if (Object.keys(resources).length === Object.keys(stackTemplate.Resources).length) {
-                                // That's all promises met (resources all loaded).
-                                deferred.resolve(resources);
+
+            // Loop over resources for as long as it takes to build a web of promises.
+            var numResourcesToLoad;
+            do {
+                // Get the number of resources to load. If none are loaded after each loop then throw.
+                numResourcesToLoad = Object.keys(resourcesToLoad).length;
+
+                angular.forEach(resourcesToLoad, function(resource, resourceName) {
+                    // Check resource requirements (refs to resolve).
+                    resourceRefs = getAllResourceRefs(resource);
+
+                    if (0 === resourceRefs.length) {
+                        // No dependencies, load now (or at least get a promise to that affect).
+                        resourcePromises[resourceName] = loadResource(resource, resourceName);
+                        delete resourcesToLoad[resourceName];
+                    }
+                    else {
+                        // Can't load until dependencies are met, so find which Refs are dependent
+                        // on another resource, and gather up their promises.
+                        resourceDependencies = [];
+                        angular.forEach(resourceRefs, function(ref)
+                        {
+                            if (ref && (typeof stackTemplate.Resources[ref] !== 'undefined')) {
+                                // This is a ref to another resource in the stack, so it's a 
+                                // dependency.
+                                resourceDependencies.push(ref);
                             }
                         });
 
-                        // Delete from resource queue (even if it's still loading asynchonously,
-                        // remove it from the list of resources that still need loading.
-                        delete resourcesToLoad[resourceName];
+                        if (0 === resourceDependencies.length) {
+                            // Not dependent on any other resources (all refs must be parameters, load now, as above).
+                            resourcePromises[resourceName] = loadResource(resource, resourceName);
+                            delete resourcesToLoad[resourceName];
+                        }
+                        else {
+                            // This resource is dependent on 1 or more other resources, check if
+                            // their promises are in. Build a list of all the promises.
+                            dependencyPromises = {};
+                            angular.forEach(resourceDependencies, function(dep) {
+                                if (typeof resourcePromises[dep] !== 'undefined') {
+                                    dependencyPromises[dep] = resourcePromises[dep];
+                                }
+                            });
+
+                            // Check if all the promises are in.
+                            if (Object.keys(dependencyPromises).length === resourceDependencies.length) {
+                                // Defer this loading until resources are met.
+                                var deferred = $q.defer();
+                                resourcePromises[resourceName] = deferred.promise;
+                                // Create a single promise for the dependencies.
+                                $q.all(dependencyPromises).then(function(results) {
+                                    // Once all dependencies are met, load this resource.
+                                    loadResource(resource, resourceName).then(function(result)
+                                    {
+                                        // TODO: Replace the Refs within result Refs.
+                                        result.Refs = results;
+                                        // And pass my result back up to resolve my promise.
+                                        deferred.resolve(result);
+                                    });
+                                });
+                                delete resourcesToLoad[resourceName];
+                            }
+                            // else, wait on next loop to see if more promises are made.
+                        }
                     }
-                    // else, resource stays in resourceToLoad until refs are met.
                 });
-                attempts++;
-            }
+
+                if (Object.keys(resourcesToLoad).length === numResourcesToLoad) {
+                    throw "Couldn't resolve resource dependencies";
+                }
+            } while (!isEmpty(resourcesToLoad));
         }
 
-        if (!$scope.isEmpty(delayed)) {
-            throw "Resource refs not met."
-        }
-
-        return deferred.promise;
+        // Combine all resource promises into a single promise for this function.
+        return $q.all(resourcePromises);
     };
 
-    var resolveResourceProperty = function(resource, propertyName, stack)
+    var resolveResourceProperty = function(resource, propertyName, stack, resources)
     {
-
         if (!resource.Properties || ('undefined' === typeof resource.Properties[propertyName])) {
             return null;
         }
@@ -176,7 +275,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         else if (angular.isObject(property)) {
             if (typeof property.Ref !== 'undefined') {
                 // Property is a { Ref : something }.
-                return resolveStackRef(property.Ref, stack);
+                return resolveStackRef(property.Ref, stack.Parameters, resources);
             }
             else {
                 return property;
@@ -184,16 +283,23 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         }
     };
 
-    var resolveStackRef = function(ref, stack)
+    var resolveStackRef = function(ref, parameters, resources)
     {
         // Check Parameters.
-        if (stack.Parameters && stack.Parameters[ref]) {
-            return stack.Parameters[ref].Value;
+        if (parameters && parameters[ref]) {
+            return parameters[ref].Value;
+        }
+        // Check Resources.
+        else if (resources && resources[ref]) {
+            return resources[ref];
         }
         else {
             return null;
         }
     };
+
+    // Load on init.
+    $scope.loadStack();
 });
 
 /* Services */
