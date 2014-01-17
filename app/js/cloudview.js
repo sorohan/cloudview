@@ -1,5 +1,7 @@
 'use strict';
 
+// TODO: Resolve Ref values (parameters need to be resolved for sub-sub stacks to load).
+
 /* Constants */
 var AWS_CloudFormation_Stack = 'AWS::CloudFormation::Stack';
 
@@ -113,7 +115,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         var getAllResourceRefs = function(obj, refs)
         {
             if ('undefined' === typeof refs) {
-                refs = [];
+                refs = {};
             }
 
             if (!angular.isObject(obj)) {
@@ -123,7 +125,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                 angular.forEach(obj, function(value, key) {
                     if (angular.isObject(value)) {
                         if ('undefined' !== typeof value.Ref) {
-                            refs.push(value.Ref);
+                            refs[value.Ref] = value;
                         }
                         else {
                             // concat sub-object refs if any.
@@ -136,10 +138,9 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
             return refs;
         };
 
-
         var isResourceRefsMet = function(resource, parameters, resources)
         {
-            var refs = getAllResourceRefs(resource);
+            var refs = Object.keys(getAllResourceRefs(resource));
 
             var allMet = true;
             var isMet;
@@ -152,13 +153,36 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
             return allMet;
         };
 
-        var loadResource = function(resource, resourceName)
+        var resolveResourcesParams = function(resources, parameters)
+        {
+            angular.forEach(resources, function(resource, resourceName) {
+                var refs = Object.keys(getAllResourceRefs(resource));
+                angular.forEach(refs, function(ref) {
+                    resource[ref] = resolveStackRef(ref, parameters);
+                });
+            });
+        };
+
+        var loadResource = function(resource, resourceName, parameters)
         {
             var deferred = $q.defer();
 
+            var resolveResourceParameters = function(resource, parameters)
+            {
+                // Resolve parameters for the resource.
+                var refs = getAllResourceRefs(resource);
+                angular.forEach(refs, function(ref, refName) {
+                    ref.Value = resolveStackRef(refName, parameters);
+                });
+
+            };
+
+            resolveResourceParameters(resource, parameters);
+
             if (resource.Type === AWS_CloudFormation_Stack) {
                 // Load from template URL is asynchronous & recursive.
-                loadStackTemplateFromUrl( resolveResourceProperty(resource, 'TemplateURL', stack) ).then(function(result) {
+                var templateUrl = resolveResourceProperty(resource, 'TemplateURL', stack);
+                loadStackTemplateFromUrl( templateUrl ).then(function(result) {
                     resource.StackTemplate = result;
                     if (result) {
                         // Template loaded, now load the sub-stack as a resource.
@@ -193,11 +217,11 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
 
                 angular.forEach(resourcesToLoad, function(resource, resourceName) {
                     // Check resource requirements (refs to resolve).
-                    resourceRefs = getAllResourceRefs(resource);
+                    resourceRefs = Object.keys(getAllResourceRefs(resource));
 
                     if (0 === resourceRefs.length) {
                         // No dependencies, load now (or at least get a promise to that affect).
-                        resourcePromises[resourceName] = loadResource(resource, resourceName);
+                        resourcePromises[resourceName] = loadResource(resource, resourceName, stackTemplate.Parameters);
                         delete resourcesToLoad[resourceName];
                     }
                     else {
@@ -207,7 +231,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                         angular.forEach(resourceRefs, function(ref)
                         {
                             if (ref && (typeof stackTemplate.Resources[ref] !== 'undefined')) {
-                                // This is a ref to another resource in the stack, so it's a 
+                                // This is a ref to another resource in the stack, so it's a
                                 // dependency.
                                 resourceDependencies.push(ref);
                             }
@@ -215,7 +239,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
 
                         if (0 === resourceDependencies.length) {
                             // Not dependent on any other resources (all refs must be parameters, load now, as above).
-                            resourcePromises[resourceName] = loadResource(resource, resourceName);
+                            resourcePromises[resourceName] = loadResource(resource, resourceName, stackTemplate.Parameters);
                             delete resourcesToLoad[resourceName];
                         }
                         else {
@@ -236,10 +260,20 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                                 // Create a single promise for the dependencies.
                                 $q.all(dependencyPromises).then(function(results) {
                                     // Once all dependencies are met, load this resource.
-                                    loadResource(resource, resourceName).then(function(result)
+                                    loadResource(resource, resourceName, stackTemplate.Parameters).then(function(result)
                                     {
-                                        // TODO: Replace the Refs within result Refs.
-                                        result.Refs = results;
+                                        // Replace the Refs within result Refs.
+                                        var resolveResourceRefs = function(resource, resourceRefs)
+                                        {
+                                            // Resolve resource refs for the resource.
+                                            var refs = getAllResourceRefs(resource);
+                                            angular.forEach(refs, function(ref, refName) {
+                                                ref.Value = resolveStackRef(refName, null, resourceRefs);
+                                            });
+                                        };
+
+                                        resolveResourceRefs(resource, results);
+
                                         // And pass my result back up to resolve my promise.
                                         deferred.resolve(result);
                                     });
@@ -273,7 +307,10 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
             return property;
         }
         else if (angular.isObject(property)) {
-            if (typeof property.Ref !== 'undefined') {
+            if (property.Value) {
+                return property.Value;
+            }
+            else if (typeof property.Ref !== 'undefined') {
                 // Property is a { Ref : something }.
                 return resolveStackRef(property.Ref, stack.Parameters, resources);
             }
