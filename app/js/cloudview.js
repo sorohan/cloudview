@@ -384,7 +384,10 @@ cloudviewApp.directive('cloudviewStackResource', function($compile) {
         link : function (scope, element, attrs) {
             var elementMap = {
                 'AWS::CloudFormation::Stack' : '<cloudview-stack stack="resource.Stack" parent="stack" name="name" />',
-//                'AWS::EC2::VPC' : '<cloudview-vpc properties="resource.Properties" stack="stack" name="name"/>'
+                'AWS::EC2::VPC' : '<cloudview-vpc properties="resource.Properties" stack="stack" name="name" />',
+                'AWS::EC2::Subnet' : '<cloudview-subnet properties="resource.Properties" stack="stack" name="name" />',
+                'AWS::AutoScaling::AutoScalingGroup' : '<cloudview-asgroup properties="resource.Properties" stack="stack" name="name" />',
+                'AWS::EC2::Instance' : '<cloudview-ec2instance properties="resource.Properties" stack="stack" name="name" />'
             };
 
             scope.$watch('resource', function(newValue, oldValue)
@@ -396,16 +399,15 @@ cloudviewApp.directive('cloudviewStackResource', function($compile) {
                 var stack = scope.stack;
                 var resource = scope.resource;
 
-                // Map resources to HTML elements.
-                var eleType, resourceHtml;
                 if ('undefined' === typeof elementMap[resource.Type]) {
                     // Ignore elements that aren't mapped.
-                    var newElement = angular.element('<div class="resource ' + scope.resource.Type + 
-                        '" title="' + scope.name + '">' + scope.name + '</div>');
-                    element.replaceWith(newElement);
+                    console.log('remove ' + resource.Type);
+                    element.remove();
                     return;
                 }
 
+                // Map resources to HTML elements.
+                var eleType, resourceHtml;
                 var template = elementMap[resource.Type];
                 var newElement = angular.element(template);
                 console.log('inserting ' + scope.name);
@@ -426,6 +428,45 @@ cloudviewApp.directive('cloudviewVpc', function() {
             name : '=',
         },
         template : '<div class="vpc">{{properties.CidrBlock.Value}}</div>',
+        replace : true
+    }
+});
+
+cloudviewApp.directive('cloudviewSubnet', function() {
+    return {
+        restrict: 'E',
+        scope: {
+            properties : '=',
+            stack : '=',
+            name : '=',
+        },
+        template : '<div class="subnet">Subnet</div>',
+        replace : true
+    }
+});
+
+cloudviewApp.directive('cloudviewAsgroup', function() {
+    return {
+        restrict: 'E',
+        scope: {
+            properties : '=',
+            stack : '=',
+            name : '=',
+        },
+        template : '<div class="asgroup">Auto-Scaling Group</div>',
+        replace : true
+    }
+});
+
+cloudviewApp.directive('cloudviewEc2instance', function() {
+    return {
+        restrict: 'E',
+        scope: {
+            properties : '=',
+            stack : '=',
+            name : '=',
+        },
+        template : '<div class="ec2-instance">EC2 Instance</div>',
         replace : true
     }
 });
