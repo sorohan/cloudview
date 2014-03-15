@@ -25,7 +25,9 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
     $scope.updateStackFromTemplate = function()
     {
         loadStackFromTemplate($scope.stackTemplate).then(function(result) {
-            $scope.stack = result;
+            // Entire stack is loaded, pass to scope for binding.
+            $scope.mainStack = result;
+            $scope.mainStackName = 'full stack';
         });
     };
 
@@ -70,14 +72,14 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         return deferred.promise;
     };
 
-    var loadStackFromTemplate = function(stackTemplate)
+    var loadStackFromTemplate = function(stackTemplate, parameters)
     {
         var deferred = $q.defer();
 
         var stack = {};
 
-        // Load params.
-        stack.Parameters = loadStackParameters(stackTemplate, stack);
+        // Load params from template & parameters passed in.
+        stack.Parameters = loadStackParameters(stackTemplate, parameters);
 
         // Load resources.
         loadStackResources(stackTemplate, stack).then(function(result) {
@@ -88,20 +90,26 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
         return deferred.promise;
     };
 
-    var loadStackParameters = function(stackTemplate, stack)
+    var loadStackParameters = function(stackTemplate, parameters)
     {
-        var parameters = {};
+        var loadedParameters = {};
         if (stackTemplate.Parameters) {
             angular.forEach(stackTemplate.Parameters, function(param, paramName) {
-                if (param.Default && !param.Value) {
-                    // Set param default value.
-                    param.Value = param.Default;
+                // Set Value on param.
+                if (!param.Value) {
+                    if (parameters && parameters[paramName] && parameters[paramName].Value) {
+                        param.Value = parameters[paramName].Value;
+                    }
+                    else if (param.Default) {
+                        // Set param default value.
+                        param.Value = param.Default;
+                    }
                 }
-                parameters[paramName] = param;
-            }, stack);
+                loadedParameters[paramName] = param;
+            });
         }
 
-        return parameters;
+        return loadedParameters;
     };
 
     var loadStackResources = function(stackTemplate, stack)
@@ -185,8 +193,8 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                 loadStackTemplateFromUrl( templateUrl ).then(function(result) {
                     resource.StackTemplate = result;
                     if (result) {
-                        // Template loaded, now load the sub-stack as a resource.
-                        loadStackFromTemplate(resource.StackTemplate).then(function(result) {
+                        // Template loaded, now pass params and load the sub-stack as a resource.
+                        loadStackFromTemplate(resource.StackTemplate, resource.Properties.Parameters).then(function(result) {
                             resource.Stack = result;
                             deferred.resolve(resource);
                         });
@@ -221,7 +229,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
 
                     if (0 === resourceRefs.length) {
                         // No dependencies, load now (or at least get a promise to that affect).
-                        resourcePromises[resourceName] = loadResource(resource, resourceName, stackTemplate.Parameters);
+                        resourcePromises[resourceName] = loadResource(resource, resourceName, stack.Parameters);
                         delete resourcesToLoad[resourceName];
                     }
                     else {
@@ -239,7 +247,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
 
                         if (0 === resourceDependencies.length) {
                             // Not dependent on any other resources (all refs must be parameters, load now, as above).
-                            resourcePromises[resourceName] = loadResource(resource, resourceName, stackTemplate.Parameters);
+                            resourcePromises[resourceName] = loadResource(resource, resourceName, stack.Parameters);
                             delete resourcesToLoad[resourceName];
                         }
                         else {
@@ -260,7 +268,7 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
                                 // Create a single promise for the dependencies.
                                 $q.all(dependencyPromises).then(function(results) {
                                     // Once all dependencies are met, load this resource.
-                                    loadResource(resource, resourceName, stackTemplate.Parameters).then(function(result)
+                                    loadResource(resource, resourceName, stack.Parameters).then(function(result)
                                     {
                                         // Replace the Refs within result Refs.
                                         var resolveResourceRefs = function(resource, resourceRefs)
@@ -339,18 +347,85 @@ cloudviewApp.controller('CloudviewCtrl', function($scope, $http, $q)
     $scope.loadStack();
 });
 
-/* Services */
+// Directives
 
-/*
-var cloudviewServices = angular.module('cloudviewServices', ['ngResource']);
+//
+// Stack Directive - Render the resources.
+//
+cloudviewApp.directive('cloudviewStack', function($compile) {
+    return {
+        restrict: 'E',
+        scope: {
+            stack : '=',
+            parent : '=',
+            name : '='
+        },
+        template : 
+            '<div class="stack" title="{{name}}">' +
+                '<cloudview-stack-resource ' + 
+                    'ng-repeat-start="(resourceName, resource) in stack.Resources" ' + 
+                    'ng-repeat-end resource="resource" stack="stack" name="resourceName" />' + 
+            '</div>',
+        replace : true
+    }
+});
 
-cloudviewServices.factory('CloudStack', ['$resource',
-    function($resource) {
-        return {};
-        /*
-        return $resource(':templateUrl', {} {
-            query: {method:'GET', isArray:true}
-        });
-        * /
-    }]);
-*/
+//
+// Stack Resource - Render a single resource.
+//
+cloudviewApp.directive('cloudviewStackResource', function($compile) {
+    return {
+        restrict : 'E',
+        scope : {
+            resource : '=',
+            stack : '=',
+            name : '=',
+        },
+        link : function (scope, element, attrs) {
+            var elementMap = {
+                'AWS::CloudFormation::Stack' : '<cloudview-stack stack="resource.Stack" parent="stack" name="name" />',
+//                'AWS::EC2::VPC' : '<cloudview-vpc properties="resource.Properties" stack="stack" name="name"/>'
+            };
+
+            scope.$watch('resource', function(newValue, oldValue)
+            {
+                if (!newValue) {
+                    return;
+                }
+
+                var stack = scope.stack;
+                var resource = scope.resource;
+
+                // Map resources to HTML elements.
+                var eleType, resourceHtml;
+                if ('undefined' === typeof elementMap[resource.Type]) {
+                    // Ignore elements that aren't mapped.
+                    var newElement = angular.element('<div class="resource ' + scope.resource.Type + 
+                        '" title="' + scope.name + '">' + scope.name + '</div>');
+                    element.replaceWith(newElement);
+                    return;
+                }
+
+                var template = elementMap[resource.Type];
+                var newElement = angular.element(template);
+                console.log('inserting ' + scope.name);
+                $compile(newElement)(scope);
+                element.replaceWith(newElement);
+            },
+            true);
+        }
+    }
+});
+
+cloudviewApp.directive('cloudviewVpc', function() {
+    return {
+        restrict: 'E',
+        scope: {
+            properties : '=',
+            stack : '=',
+            name : '=',
+        },
+        template : '<div class="vpc">{{properties.CidrBlock.Value}}</div>',
+        replace : true
+    }
+});

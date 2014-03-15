@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en" ng-app="cloudviewApp">
     <head>
+        <meta http-equiv="content-type" content="text/html; charset=UTF8">
         <script src="components/angular/angular.js"></script>
         <script src="app/js/cloudview.js"></script>
     </head>
@@ -11,15 +12,13 @@
             <dl>
                 <dt ng-repeat-start="(paramName,param) in stackTemplate.Parameters">{{paramName}}</dt>
                 <dd ng-repeat-end>
-                    <input type="text" ng-model="stack.Parameters[paramName].Value">
+                    <input type="text" ng-model="mainStack.Parameters[paramName].Value">
                     {{param.Description}}
                 </dd>
             </dl>
             <button ng-click="updateStackFromTemplate()">Update Stack Params</button>
         </form>
 
-        <cloudview-stack></cloudview-stack>
-
-        <pre>{{jsonStringify(stack)}}</pre>
+        <cloudview-stack name="mainStackName" stack="mainStack"></cloudview-stack>
     </body>
 </html>
