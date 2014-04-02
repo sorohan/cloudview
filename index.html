@@ -4,19 +4,23 @@
         <meta http-equiv="content-type" content="text/html; charset=UTF8">
         <script src="components/angular/angular.js"></script>
         <script src="app/js/cloudview.js"></script>
+        <script src="app/js/services/stack.js"></script>
     </head>
     <body ng-controller="CloudviewCtrl">
-        Cloudformation Stack template URL: <input type="text" ng-model="templateUrl" />
-        <input type="button" value="bam" ng-click="loadStack()" />
-        <form class="stack-params" ng-show="!isEmpty(stackTemplate.Parameters)">
+        Cloudformation Stack template URL:
+            <input type="text" ng-model="templateUrl" />
+            <input type="button" value="bam" ng-click="loadStackFromUrl()" />
+
+        <!-- todo: move logic for setting params to <cloudview-stack>" -->
+        <form class="stack-params" ng-show="!isEmpty(mainStackTemplate.Parameters)">
             <dl>
-                <dt ng-repeat-start="(paramName,param) in stackTemplate.Parameters">{{paramName}}</dt>
+                <dt ng-repeat-start="(paramName,param) in mainStackTemplate.Parameters">{{paramName}}</dt>
                 <dd ng-repeat-end>
-                    <input type="text" ng-model="mainStack.Parameters[paramName].Value">
+                    <input type="text" ng-model="mainStackTemplate.Parameters[paramName].Value">
                     {{param.Description}}
                 </dd>
             </dl>
-            <button ng-click="updateStackFromTemplate()">Update Stack Params</button>
+            <button ng-click="loadStackFromTemplate()">Update Stack Params</button>
         </form>
 
         <cloudview-stack name="mainStackName" stack="mainStack"></cloudview-stack>
