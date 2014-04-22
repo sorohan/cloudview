@@ -43,6 +43,8 @@ cloudviewApp.controller('CloudviewCtrl', ['$scope', 'cloudformation', function (
                 // Entire stack is loaded, pass to scope for binding.
                 $scope.mainStack = result;
                 $scope.mainStackName = 'full stack';
+                $scope.mainStackTopology = cloudformation.generateNetworkTopology($scope.mainStack);
+
             });
     };
 
@@ -83,105 +85,47 @@ cloudviewApp.controller('CloudviewCtrl', ['$scope', 'cloudformation', function (
     $scope.isEmpty  = isEmpty;
 }]);
 
-// Constants
-var AWS_CLOUDFORMATION_STACK = 'AWS::CloudFormation::Stack';
-var AWS_EC2_VPC = 'AWS::EC2::VPC';
-var AWS_EC2_Subnet = 'AWS::EC2::Subnet';
-var AWS_EC2_Instance = 'AWS::EC2::Instance';
-
-// Define cloud topology.
-var STACK_ROOT = '__stack_root__'; // cloud topology root.
-var CLOUD_TOPOLOGY = {
-    'AWS::EC2::VPC' : { placement : STACK_ROOT },
-    'AWS::EC2::Subnet' : { placement : 'VPCId' },
-    'AWS::EC2::Instance' : { placement : 'SubnetId' }
-};
-
-/**
- * From the given stack object, resolve dependencies into a nested hierarchy.
- *
- * Eg. Take EC2 instances that reference a VPC, and add them to the VPC's "resources".
- */
-var generateNetworkTopologyHierarchy = function(stack, topology)
-{
-    var addResourceToParent = function(resource, resourceName, parentResource)
-    {
-        if (!parentResource) {
-            return;
-        }
-
-        if (!parentResource.Resources) {
-            parentResource.Resources = {};
-        }
-        parentResource.Resources[resourceName] = resource;
-    };
-
-    if (typeof topology == 'undefined') {
-        topology = { };
-    }
-    angular.forEach(stack.Resources, function(resource, resourceName) {
-        return;
-        var placement, isParentDefined;
-        if (resource.Type === AWS_CLOUDFORMATION_STACK) {
-            // Recurse, add this stack to the topology.
-            topology = generateNetworkTopologyHierarchy(resource.Stack, topology);
-        }
-        else {
-            // Check for resource within the topology map.
-            if (typeof CLOUD_TOPOLOGY[resource.Type] !== 'undefined') {
-                placement = CLOUD_TOPOLOGY[resource.Type] ;
-                if (placement === STACK_ROOT) {
-                    // Resource belongs in the top-level.
-                    topology[resourceName] = resource;
-                }
-                else {
-                    // Resource belongsTo another member of the stack, which should be
-                    // defined as one of it's properties.
-                    isParentDefined = (resource.Properties &&
-                        resource.Properties[placement] &&
-                        resource.Properties[placement] &&
-                        resource.Properties[placement].prototype);
-                    if (isParentDefined) {
-                        addResourceToParent(resource, resourceName, resource.Properties[placement]);
-                    }
-                    else {
-                        console.log(resourceName + ' is orphaned');
-                    }
-                }
-
-            }
-        }
-    });
-
-    return topology;
-};
-
 // Directives
 
 //
 // Stack Directive - Render the resources.
 //
-cloudviewApp.directive('cloudviewStack', function($compile) {
+cloudviewApp.directive('cloudviewStackTopology', function($compile) {
     return {
         restrict: 'E',
         scope: {
-            stack : '=',
-            parent : '=',
-            name : '='
+            topology : '=topology',
+            name : '=name'
         },
+        link : function (scope, element, attrs) {
+            scope.$watch('topology', function(newValue, oldValue) {
+                if (!newValue) {
+                    return;
+                }
+                var topology = newValue;
+
+                console.log(topology);
+
+                var newElement = angular.element('<div>test</div>');
+                element.replaceWith(newElement);
+            });
+        }
+        /*
         template : 
             '<div class="stack" title="{{name}}">' +
                 '<cloudview-stack-resource ' + 
                     'ng-repeat-start="(resourceName, resource) in stack.Resources" ' + 
                     'ng-repeat-end resource="resource" stack="stack" name="resourceName" />' + 
             '</div>',
-        replace : true
+        */
+//        replace : true
     }
 });
 
 //
 // Stack Resource - Render a single resource.
 //
+/*
 cloudviewApp.directive('cloudviewStackResource', function($compile) {
     return {
         restrict : 'E',
@@ -192,7 +136,7 @@ cloudviewApp.directive('cloudviewStackResource', function($compile) {
         },
         link : function (scope, element, attrs) {
             var elementMap = {
-                'AWS::CloudFormation::Stack' : '<cloudview-stack stack="resource.Stack" parent="stack" name="name" />',
+                'AWS::CloudFormation::Stack' : '<cloudview-stack stack="resource.Stack" name="name" />',
                 'AWS::EC2::VPC' : '<cloudview-vpc properties="resource.Properties" stack="stack" name="name" />',
                 'AWS::EC2::Subnet' : '<cloudview-subnet properties="resource.Properties" stack="stack" name="name" />',
                 'AWS::EC2::Instance' : '<cloudview-ec2instance properties="resource.Properties" stack="stack" name="name" />'
@@ -227,7 +171,9 @@ cloudviewApp.directive('cloudviewStackResource', function($compile) {
         }
     }
 });
+*/
 
+/*
 cloudviewApp.directive('cloudviewVpc', function() {
     return {
         restrict: 'E',
@@ -279,3 +225,4 @@ cloudviewApp.directive('cloudviewEc2instance', function() {
         replace : true
     }
 });
+*/

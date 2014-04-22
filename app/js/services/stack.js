@@ -3,6 +3,17 @@ var cloudviewApp = angular.module('cloudviewApp');
 
 // Constants
 var AWS_CLOUDFORMATION_STACK = 'AWS::CloudFormation::Stack';
+var AWS_EC2_VPC = 'AWS::EC2::VPC';
+var AWS_EC2_Subnet = 'AWS::EC2::Subnet';
+var AWS_EC2_Instance = 'AWS::EC2::Instance';
+
+// Define cloud topology.
+var STACK_ROOT = '__stack_root__'; // cloud topology root.
+var CLOUD_TOPOLOGY = {
+    'AWS::EC2::VPC' : { placement : STACK_ROOT },
+    'AWS::EC2::Subnet' : { placement : 'VpcId' },
+    'AWS::EC2::Instance' : { placement : 'SubnetId' }
+};
 
 /**
  * Create a new service for managing the cloudview stack with AWS cloudformation.
@@ -124,6 +135,8 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
             numResourcesToLoad = Object.keys(resourcesToLoad).length;
 
             angular.forEach(resourcesToLoad, function(resource, resourceName) {
+                var resourcePromise; // Single resource promise.
+
                 // Find dependencies.
                 var dependencyPromises = _getResourceDependencies(
                     resource,
@@ -134,12 +147,14 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
                 // If "false", then promises haven't been loaded yet.
                 if (dependencyPromises !== false) {
                     // Promises are in - load resource.
-                    resourcePromises[resourceName] = loadResource(
+                    dependencyPromise = loadResource(
                         stack,
                         resource,
                         resourceName,
                         stack.Parameters,
                         dependencyPromises);
+
+                    resourcePromises[resourceName] = dependencyPromise;
                     delete resourcesToLoad[resourceName];
                 }
                 // else, wait until next loop until all dependency promises are in.
@@ -169,7 +184,10 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
             // Can't load until dependencies are met, so find which Refs are dependent
             // on another resource.
             angular.forEach(resourceRefs, function(ref) {
-                if (typeof resources[ref] !== 'undefined') {
+                if (-1 !== ref.indexOf('.Outputs')) {
+                    ref = ref.substring(0, ref.indexOf('.Outputs'));
+                }
+                if (typeof resources[ref] !== 'undefined' && -1 === resourceDependencies.indexOf(ref)) {
                     // This is a ref to another resource in the stack, so it's a dependency.
                     resourceDependencies.push(ref);
                 }
@@ -206,21 +224,26 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
         {
             // Resolve refs for the resource.
             var refs = getAllResourceRefs(resource);
+
+            // Make a fake stack for resolving the dependency values.
+            var tmpStack = stack; // angular.copy(stack);
+            tmpStack.Resources = dependencies;
+
             angular.forEach(refs, function(ref, refName) {
-                ref.Value = resolveStackRef(stack, refName); // , parameters, dependencies);
+                ref.Value = resolveStackValue(tmpStack, ref);
             });
         };
 
         var _load = function(resource, resourceName, parameters, dependencies)
         {
             console.log(resourceName);
+
             _resolveResourceRefs(resource, parameters, dependencies);
 
             if (resource.Type === AWS_CLOUDFORMATION_STACK) {
                 // Load from template URL is asynchronous & recursive.
                 var templateUrl = resolveResourceProperty(stack, resource, 'TemplateURL');
                 if (!templateUrl) {
-                    debugger;
                     deferred.reject('Template URL for ' + resourceName + ' not set');
                 }
                 else {
@@ -312,7 +335,7 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
                         refs[value.Ref] = value;
                     }
                     else if ('undefined' !== typeof value['Fn::GetAtt']) {
-                        refs[value['Fn::GetAtt'][0]] = value['Fn::GetAtt'];
+                        refs[value['Fn::GetAtt'][0] + '.' + value['Fn::GetAtt'][1]] = value;
                     }
                     else {
                         // concat sub-object refs if any.
@@ -324,24 +347,6 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
 
         return refs;
     };
-
-    /**
-     * Return bool if the given resource has all refs met by the parameters / resources.
-    var isResourceRefsMet = function(resource, parameters, resources)
-    {
-        var refs = Object.keys(getAllResourceRefs(resource));
-
-        var allMet = true;
-        var isMet;
-
-        angular.forEach(refs, function(ref) {
-            isMet = resolveStackRef(stack, ref); // , parameters, resources);
-            allMet = allMet && isMet;
-        });
-
-        return allMet;
-    };
-    */
 
     /**
      * For the given resource/property, resolve the value from the parameters & dependencies.
@@ -397,17 +402,25 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
     };
 
     /**
-     * Resolve the given "Ref:" property from the parameters/resources.
+     * Resolve the given "Ref:" property from the stack.
      */
     var resolveStackRef = function(stack, ref)
     {
+        return resolveResourceRef(ref, stack.Parameters, stack.Resources);
+    };
+
+    /**
+     * Resolve the given "Ref:" property from the params/dependencies.
+     */
+    var resolveResourceRef = function(ref, parameters, dependencies)
+    {
         // Check Parameters.
-        if (stack.Parameters && stack.Parameters[ref]) {
-            return stack.Parameters[ref].Value;
+        if (parameters && parameters[ref]) {
+            return parameters[ref].Value;
         }
-        // Check Resources.
-        else if (stack.Resources && stack.Resources[ref]) {
-            return stack.Resources[ref];
+        // Check dependencies.
+        else if (dependencies && dependencies[ref]) {
+            return dependencies[ref];
         }
         else {
             return null;
@@ -478,9 +491,90 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
         return !obj || angular.equals(obj, {});
     };
 
+    /**
+     * From the given stack object, resolve dependencies into a nested hierarchy.
+     *
+     * Eg. Take EC2 instances that reference a VPC, and add them to the VPC's "resources".
+     */
+    var generateNetworkTopology = function(stack, topology)
+    {
+        var addResourceToParent = function(resource, resourceName, parentResource)
+        {
+            if (!parentResource) {
+                return;
+            }
+
+            if (!parentResource[resource.Type]) {
+                parentResource[resource.Type] = [ ];
+            }
+
+            if (-1 === parentResource[resource.Type].indexOf(resource)) {
+                parentResource[resource.Type].push( resource );
+            }
+        };
+
+        if (typeof topology == 'undefined') {
+            topology = { };
+            /*
+            topology = {
+                AWS::Vpc : [
+                    {
+                        ...
+                        AWS::Subnet : [
+                            {
+                                ...
+                                AWS::Ec2Instance : [ { ... } ]
+                            }
+                        ]
+                    }
+                ],
+            };
+            */
+        }
+
+        angular.forEach(stack.Resources, function(resource, resourceName) {
+            var placement, isParentDefined;
+            if (resource.Type === AWS_CLOUDFORMATION_STACK) {
+                // Recurse, add this stack to the topology.
+                topology = generateNetworkTopology(resource.Stack, topology);
+            }
+            else {
+                // Check for resource within the topology map.
+                if (typeof CLOUD_TOPOLOGY[resource.Type] !== 'undefined') {
+                    placement = CLOUD_TOPOLOGY[resource.Type].placement ;
+                    resource.name = resourceName;
+                    if (placement === STACK_ROOT) {
+                        // Resource belongs in the top-level.
+                        if ('undefined' === typeof topology[resource.Type]) {
+                            topology[resource.Type] = [ ];
+                        }
+                        topology[resource.Type].push( resource );
+                    }
+                    else {
+                        // Resource belongsTo another member of the stack, which should be
+                        // defined as one of it's properties.
+                        isParentDefined = (resource.Properties &&
+                            resource.Properties[placement] &&
+                            resource.Properties[placement].Value);
+                        if (isParentDefined) {
+                            addResourceToParent(resource, resourceName, resource.Properties[placement].Value);
+                        }
+                        else {
+                            console.log(resourceName + ' is orphaned');
+                        }
+                    }
+
+                }
+            }
+        });
+
+        return topology;
+    };
+
     //
     // Expose a couple of methods to the service.
     //
     this.loadStackTemplateFromUrl = loadStackTemplateFromUrl;
     this.loadStackFromTemplate    = loadStackFromTemplate;
+    this.generateNetworkTopology  = generateNetworkTopology;
 }]);
