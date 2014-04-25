@@ -504,12 +504,12 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
                 return;
             }
 
-            if (!parentResource[resource.Type]) {
-                parentResource[resource.Type] = [ ];
+            if (!parentResource['nodes']) {
+                parentResource['nodes'] = [ ];
             }
 
-            if (-1 === parentResource[resource.Type].indexOf(resource)) {
-                parentResource[resource.Type].push( resource );
+            if (-1 === parentResource['nodes'].indexOf(resource)) {
+                parentResource['nodes'].push( resource );
             }
         };
 
@@ -517,13 +517,20 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
             topology = { };
             /*
             topology = {
-                AWS::Vpc : [
+                nodes : [
                     {
+                        Type : AWS::Vpc,
                         ...
-                        AWS::Subnet : [
+                        nodes : [
                             {
+                                Type : AWS::Subnet
                                 ...
-                                AWS::Ec2Instance : [ { ... } ]
+                                nodes : [
+                                    {
+                                        Type : AWS::Ec2Instance
+                                        ...
+                                    }
+                                ]
                             }
                         ]
                     }
@@ -545,10 +552,10 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
                     resource.name = resourceName;
                     if (placement === STACK_ROOT) {
                         // Resource belongs in the top-level.
-                        if ('undefined' === typeof topology[resource.Type]) {
-                            topology[resource.Type] = [ ];
+                        if ('undefined' === typeof topology['nodes']) {
+                            topology['nodes'] = [ ];
                         }
-                        topology[resource.Type].push( resource );
+                        topology['nodes'].push( resource );
                     }
                     else {
                         // Resource belongsTo another member of the stack, which should be
