@@ -12,7 +12,11 @@ var STACK_ROOT = '__stack_root__'; // cloud topology root.
 var CLOUD_TOPOLOGY = {
     'AWS::EC2::VPC' : { placement : STACK_ROOT },
     'AWS::EC2::Subnet' : { placement : 'VpcId' },
-    'AWS::EC2::Instance' : { placement : 'SubnetId' }
+    'AWS::EC2::Instance' : { placement : 'SubnetId' },
+    'AWS::EC2::EIP' : { placement : 'InstanceId' },
+    'AWS::ElasticLoadBalancing::LoadBalancer' : { placement : 'Subnets' },
+    'AWS::AutoScaling::AutoScalingGroup' : { placement : 'LoadBalancerNames' },
+    'AWS::EC2::InternetGateway' : { placement : STACK_ROOT }
 };
 
 /**
@@ -561,13 +565,26 @@ cloudviewApp.service('cloudformation', ['$http', '$q', function($http, $q) {
                         // Resource belongsTo another member of the stack, which should be
                         // defined as one of it's properties.
                         isParentDefined = (resource.Properties &&
-                            resource.Properties[placement] &&
-                            resource.Properties[placement].Value);
-                        if (isParentDefined) {
-                            addResourceToParent(resource, resourceName, resource.Properties[placement].Value);
+                            resource.Properties[placement]);
+
+                        // Todo: Clean up duplicate code.
+                        if (isParentDefined && angular.isArray(resource.Properties[placement])) {
+                            // Multiple placements.
+                            for (var i = 0; i < resource.Properties[placement].length; i ++) {
+                                isParentDefined = (resource.Properties[placement][i].Value);
+                                if (isParentDefined) {
+                                    addResourceToParent(resource, resourceName, resource.Properties[placement][i].Value);
+                                }
+                            }
                         }
                         else {
-                            console.log(resourceName + ' is orphaned');
+                            isParentDefined = (isParentDefined && resource.Properties[placement].Value);
+                            if (isParentDefined) {
+                                addResourceToParent(resource, resourceName, resource.Properties[placement].Value);
+                            }
+                            else {
+                                console.log(resourceName + ' is orphaned');
+                            }
                         }
                     }
 

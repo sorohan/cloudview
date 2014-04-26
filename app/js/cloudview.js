@@ -27,6 +27,20 @@ cloudviewApp.controller('CloudviewCtrl', ['$scope', 'cloudformation', function (
         }
     };
 
+    /*
+     * Load the stack from template JSON string.
+     */
+    $scope.loadStackFromTemplateJson = function()
+    {
+        if (!$scope.mainStackTemplateJson) {
+            return;
+        }
+
+        $scope.mainStackTemplate = angular.fromJson($scope.mainStackTemplateJson);
+
+        return $scope.loadStackFromTemplate();
+    };
+
     /**
      * Create a new stack from the $scope.mainStackTemplate.
      */

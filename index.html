@@ -11,8 +11,17 @@
             <input type="text" ng-model="templateUrl" />
             <input type="button" value="bam" ng-click="loadStackFromUrl()" />
 
+        <br/>
+        <blockquote>OR</blockquote>
+        <br/>
+
+        Cloudformation template JSON:
+            <textarea ng-model="mainStackTemplateJson" style="height:100px;"></textarea>
+            <input type="button" value="bam" ng-click="loadStackFromTemplateJson()" />
+
         <!-- todo: move logic for setting params to <cloudview-stack>" -->
         <form class="stack-params" ng-show="!isEmpty(mainStackTemplate.Parameters)">
+            <p>Template Parameters</p>
             <dl>
                 <dt ng-repeat-start="(paramName,param) in mainStackTemplate.Parameters">{{paramName}}</dt>
                 <dd ng-repeat-end>
