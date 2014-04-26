@@ -13,10 +13,10 @@ var CLOUD_TOPOLOGY = {
     'AWS::EC2::VPC' : { placement : STACK_ROOT },
     'AWS::EC2::Subnet' : { placement : 'VpcId' },
     'AWS::EC2::Instance' : { placement : 'SubnetId' },
-    'AWS::EC2::EIP' : { placement : 'InstanceId' },
-    'AWS::ElasticLoadBalancing::LoadBalancer' : { placement : 'Subnets' },
-    'AWS::AutoScaling::AutoScalingGroup' : { placement : 'LoadBalancerNames' },
-    'AWS::EC2::InternetGateway' : { placement : STACK_ROOT }
+    'AWS::EC2::EIP' : { placement : 'InstanceId' }
+//    'AWS::ElasticLoadBalancing::LoadBalancer' : { placement : 'Subnets' },
+//    'AWS::AutoScaling::AutoScalingGroup' : { placement : 'LoadBalancerNames' },
+//    'AWS::EC2::InternetGateway' : { placement : STACK_ROOT }
 };
 
 /**
